@@ -1,0 +1,27 @@
+name: dreamer
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - torchvision
+  - torchaudio
+  - pytorch
+  - gym
+  - gymnasium
+  - mujoco
+  - dm-control
+  - tensorboard
+  - tqdm
+  - scikit-learn
+  - opencv
+  - imageio
+  - pip:
+      - pygame
+      - moviepy
+      - seaborn
+      - protobuf  # Ensure compatibility with newer Mujoco

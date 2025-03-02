@@ -134,69 +134,92 @@ class RSSM(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-
     def __init__(self, input_shape, embed_size, activation, depth=32):
-
+        """
+        Beginner-friendly version of ConvEncoder.
+        Args:
+            input_shape: tuple, e.g., (3, 64, 64)
+            embed_size: desired output embedding size
+            activation: string key (e.g. 'relu', 'elu')
+            depth: base number of channels
+        """
         super().__init__()
-
         self.input_shape = input_shape
-        self.act_fn = _str_to_activation[activation]
-        self.depth = depth
-        self.kernels = [4, 4, 4, 4]
-
         self.embed_size = embed_size
-        
-        layers = []
-        for i, kernel_size in enumerate(self.kernels):
-            in_ch = input_shape[0] if i==0 else self.depth * (2 ** (i-1))
-            out_ch = self.depth * (2 ** i)
-            layers.append(nn.Conv2d(in_ch, out_ch, kernel_size, stride=2))
-            layers.append(self.act_fn)
+        self.depth = depth
+        self.act_fn = _str_to_activation[activation]
+        self.kernels = [4,4,4,4]
 
-        self.conv_block = nn.Sequential(*layers)
+        # Define layers explicitly (no nn.Sequential)
+        self.h1 = nn.Conv2d(input_shape[0], 1 * self.depth, self.kernels[0], stride=2)
+        self.h2 = nn.Conv2d(1 * self.depth, 2 * self.depth, self.kernels[1], stride=2)
+        self.h3 = nn.Conv2d(2 * self.depth, 4 * self.depth, self.kernels[2], stride=2)
+        self.h4 = nn.Conv2d(4 * self.depth, 8 * self.depth, self.kernels[3], stride=2)
+
+        # Fully connected layer
         self.fc = nn.Identity() if self.embed_size == 1024 else nn.Linear(1024, self.embed_size)
 
     def forward(self, inputs):
-        reshaped = inputs.reshape(-1, *self.input_shape)
-        embed = self.conv_block(reshaped)
-        embed = torch.reshape(embed, (*inputs.shape[:-3], -1))
-        embed = self.fc(embed)
+        x = inputs.reshape(-1, *self.input_shape) 
 
-        return embed
+        x = self.act_fn(self.h1(x))
+        x = self.act_fn(self.h2(x))
+        x = self.act_fn(self.h3(x))
+        x = self.act_fn(self.h4(x))
+
+        x = torch.reshape(x, (*inputs.shape[:-3], -1))
+        x = self.fc(x)
+
+        return x
 
 class ConvDecoder(nn.Module):
- 
     def __init__(self, stoch_size, deter_size, output_shape, activation, depth=32):
-
+        """         
+        Args:
+            stoch_size: Size of stochastic state vector
+            deter_size: Size of deterministic state vector
+            output_shape: Shape of the reconstructed image (C, H, W)
+            activation: Activation function as a string (e.g., 'relu', 'elu')
+            depth: Base number of channels
+        """
         super().__init__()
-
         self.output_shape = output_shape
         self.depth = depth
-        self.kernels = [5, 5, 6, 6]
         self.act_fn = _str_to_activation[activation]
+        self.kernels = [5, 5, 6, 6]  
+
+        # Fully connected layer to reshape feature vector into initial conv shape
+        self.dense = nn.Linear(stoch_size + deter_size, 32 * depth)
+
         
-        self.dense = nn.Linear(stoch_size + deter_size, 32*self.depth)
-
-        layers = []
-        for i, kernel_size in enumerate(self.kernels):
-            in_ch = 32*self.depth if i==0 else self.depth * (2 ** (len(self.kernels)-1-i))
-            out_ch = output_shape[0] if i== len(self.kernels)-1 else self.depth * (2 ** (len(self.kernels)-2-i))
-            layers.append(nn.ConvTranspose2d(in_ch, out_ch, kernel_size, stride=2))
-            if i!=len(self.kernels)-1:
-                layers.append(self.act_fn)
-
-        self.convtranspose = nn.Sequential(*layers)
+        self.h1 = nn.ConvTranspose2d(32 * depth, 4 * depth, self.kernels[0], stride=2)
+        self.h2 = nn.ConvTranspose2d(4 * depth, 2 * depth, self.kernels[1], stride=2)
+        self.h3 = nn.ConvTranspose2d(2 * depth, 1 * depth, self.kernels[2], stride=2)
+        self.h4 = nn.ConvTranspose2d(1 * depth, output_shape[0], self.kernels[3], stride=2)
 
     def forward(self, features):
-        out_batch_shape = features.shape[:-1]
-        out = self.dense(features)
-        out = torch.reshape(out, [-1, 32*self.depth, 1, 1])
-        out = self.convtranspose(out)
-        mean = torch.reshape(out, (*out_batch_shape, *self.output_shape))
+        """
+        Args:
+            features: Latent feature vector of shape [B, stoch_size + deter_size]
 
-        out_dist = distributions.independent.Independent(
-            distributions.Normal(mean, 1), len(self.output_shape))
+        Returns:
+            Normal distribution over reconstructed image.
+        """
+        batch_shape = features.shape[:-1]  # Preserve batch dimensions
+        x = self.dense(features)
+        x = x.view(x.size(0), 32 * self.depth, 1, 1)  # Reshape for transposed convs
 
+        
+        x = self.act_fn(self.h1(x))
+        x = self.act_fn(self.h2(x))
+        x = self.act_fn(self.h3(x))
+        mean = self.h4(x)  
+
+        
+        mean = mean.view(*batch_shape, *self.output_shape)
+
+        # Return as a normal distribution with fixed std dev
+        out_dist = dist.Independent(dist.Normal(mean, 1.0), len(self.output_shape))
         return out_dist
 
 # used for reward and value models
