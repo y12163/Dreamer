@@ -2,26 +2,30 @@ name: dreamer
 channels:
   - defaults
   - conda-forge
+  - pytorch
+  - nvidia
 dependencies:
   - python=3.10
-  - pip
   - numpy
   - pandas
   - matplotlib
+  - tqdm
+  - pillow
+  - gym
+  - tensorboard
+  - swig             # Needed for building box2d-py and mujoco_py
+  - mujoco
+  - cython           # Needed for building mujoco_py
+  - lockfile
+  - pytorch
   - torchvision
   - torchaudio
-  - pytorch
-  - gym
-  - gymnasium
-  - mujoco
-  - dm-control
-  - tensorboard
-  - tqdm
-  - scikit-learn
-  - opencv
-  - imageio
+  - pip
   - pip:
-      - pygame
-      - moviepy
-      - seaborn
-      - protobuf  # Ensure compatibility with newer Mujoco
+      - dm_control
+      - moviepy==1.0.3
+      - tensorboardX
+      - opencv-python
+      - hydra-core
+      - gym
+      - protobuf

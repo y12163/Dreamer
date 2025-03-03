@@ -207,7 +207,7 @@ class ConvDecoder(nn.Module):
         """
         batch_shape = features.shape[:-1]  # Preserve batch dimensions
         x = self.dense(features)
-        x = x.view(x.size(0), 32 * self.depth, 1, 1)  # Reshape for transposed convs
+        x = torch.reshape(x, [-1, 32*self.depth, 1, 1])  # Reshape for transposed convs
 
         
         x = self.act_fn(self.h1(x))
@@ -219,7 +219,7 @@ class ConvDecoder(nn.Module):
         mean = mean.view(*batch_shape, *self.output_shape)
 
         # Return as a normal distribution with fixed std dev
-        out_dist = dist.Independent(dist.Normal(mean, 1.0), len(self.output_shape))
+        out_dist = distributions.Independent(distributions.Normal(mean, 1.0), len(self.output_shape))
         return out_dist
 
 # used for reward and value models

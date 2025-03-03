@@ -16,6 +16,7 @@ import env_wrapper
 from replay_buffer import ReplayBuffer
 from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
 from utils import *
+import json
 
 os.environ['MUJOCO_GL'] = 'egl'
 
@@ -32,15 +33,6 @@ def make_env(config):
     env = env_wrapper.TimeLimit(env, config["time-limit"] / config["action-repeat"])
     return env
 
-def make_env(args):
-
-    env = env_wrapper.DeepMindControl(args.env, args.seed)
-    env = env_wrapper.ActionRepeat(env, args.action_repeat)
-    env = env_wrapper.NormalizeActions(env)
-    env = env_wrapper.TimeLimit(env, args.time_limit / args.action_repeat)
-    #env = env_wrapper.RewardObs(env)
-    return env
-
 def preprocess_obs(obs):
     obs = obs.to(torch.float32)/255.0 - 0.5
     return obs
@@ -53,10 +45,10 @@ class Dreamer:
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
-        self.restore = args.restore
-        self.restore_path = args.checkpoint_path
-        self.data_buffer = ReplayBuffer(self.args.buffer_size, self.obs_shape, self.action_size,
-                                                    self.args.train_seq_len, self.args.batch_size)
+        self.restore = args["restore"]
+        self.restore_path = args["checkpoint_path"]
+        self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.action_size,
+                                                    self.args["train_seq_len"], self.args["batch_size"])
 
         self._build_model(restore=self.restore)
 
@@ -64,66 +56,66 @@ class Dreamer:
 
         self.rssm = RSSM(
                     action_size =self.action_size,
-                    stoch_size = self.args.stoch_size,
-                    deter_size = self.args.deter_size,
-                    hidden_size = self.args.deter_size,
-                    obs_embed_size = self.args.obs_embed_size,
-                    activation =self.args.dense_activation_function).to(self.device)
+                    stoch_size = self.args["stoch_size"],
+                    deter_size = self.args["deter_size"],
+                    hidden_size = self.args["deter_size"],
+                    obs_embed_size = self.args["obs_embed_size"],
+                    activation =self.args["dense_activation_function"]).to(self.device)
 
         self.actor = ActionDecoder(
                      action_size = self.action_size,
-                     stoch_size = self.args.stoch_size,
-                     deter_size = self.args.deter_size,
-                     units = self.args.num_units,
+                     stoch_size = self.args["stoch_size"],
+                     deter_size = self.args["deter_size"],
+                     units = self.args["num_units"],
                      n_layers=4,
-                     activation=self.args.dense_activation_function).to(self.device)
+                     activation=self.args["dense_activation_function"]).to(self.device)
         self.obs_encoder  = ConvEncoder(
                             input_shape= self.obs_shape,
-                            embed_size = self.args.obs_embed_size,
-                            activation =self.args.cnn_activation_function).to(self.device)
+                            embed_size = self.args["obs_embed_size"],
+                            activation =self.args["cnn_activation_function"]).to(self.device)
         self.obs_decoder  = ConvDecoder(
-                            stoch_size = self.args.stoch_size,
-                            deter_size = self.args.deter_size,
+                            stoch_size = self.args["stoch_size"],
+                            deter_size = self.args["deter_size"],
                             output_shape=self.obs_shape,
-                            activation = self.args.cnn_activation_function).to(self.device)
+                            activation = self.args["cnn_activation_function"]).to(self.device)
         self.reward_model = DenseDecoder(
-                            stoch_size = self.args.stoch_size,
-                            deter_size = self.args.deter_size,
+                            stoch_size = self.args["stoch_size"],
+                            deter_size = self.args["deter_size"],
                             output_shape = (1,),
                             n_layers = 2,
-                            units=self.args.num_units,
-                            activation= self.args.dense_activation_function,
+                            units=self.args["num_units"],
+                            activation= self.args["dense_activation_function"],
                             dist = 'normal').to(self.device)
         self.value_model  = DenseDecoder(
-                            stoch_size = self.args.stoch_size,
-                            deter_size = self.args.deter_size,
+                            stoch_size = self.args["stoch_size"],
+                            deter_size = self.args["deter_size"],
                             output_shape = (1,),
                             n_layers = 3,
-                            units = self.args.num_units,
-                            activation= self.args.dense_activation_function,
+                            units = self.args["num_units"],
+                            activation= self.args["dense_activation_function"],
                             dist = 'normal').to(self.device) 
-        if self.args.use_disc_model:  
+        if self.args["use_disc_model"]:  
           self.discount_model = DenseDecoder(
-                                stoch_size = self.args.stoch_size,
-                                deter_size = self.args.deter_size,
+                                stoch_size = self.args["stoch_size"],
+                                deter_size = self.args["deter_size"],
                                 output_shape = (1,),
                                 n_layers = 2,
-                                units=self.args.num_units,
-                                activation= self.args.dense_activation_function,
+                                units=self.args["num_units"],
+                                activation= self.args["dense_activation_function"],
                                 dist = 'binary').to(self.device)
         
-        if self.args.use_disc_model:
+        if self.args["use_disc_model"]:
           self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
               + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters()) + list(self.discount_model.parameters())
         else:
           self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
               + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters())
     
-        self.world_model_opt = optim.Adam(self.world_model_params, self.args.model_learning_rate)
-        self.value_opt = optim.Adam(self.value_model.parameters(), self.args.value_learning_rate)
-        self.actor_opt = optim.Adam(self.actor.parameters(), self.args.actor_learning_rate)
+        self.world_model_opt = optim.Adam(self.world_model_params, self.args["model_learning_rate"])
+        self.value_opt = optim.Adam(self.value_model.parameters(), self.args["value_learning_rate"])
+        self.actor_opt = optim.Adam(self.actor.parameters(), self.args["actor_learning_rate"])
 
-        if self.args.use_disc_model:
+        if self.args["use_disc_model"]:
           self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model, self.discount_model]
         else:
           self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model]
@@ -137,40 +129,40 @@ class Dreamer:
 
         obs = preprocess_obs(obs)
         obs_embed = self.obs_encoder(obs[1:])
-        init_state = self.rssm.init_state(self.args.batch_size, self.device)
-        prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args.train_seq_len-1)
+        init_state = self.rssm.init_state(self.args["batch_size"], self.device)
+        prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features = torch.cat([self.posterior['stoch'], self.posterior['deter']], dim=-1)
         rew_dist = self.reward_model(features)
         obs_dist = self.obs_decoder(features)
-        if self.args.use_disc_model:
+        if self.args["use_disc_model"]:
           disc_dist = self.discount_model(features)
 
         prior_dist = self.rssm.get_dist(prior['mean'], prior['std'])
         post_dist = self.rssm.get_dist(self.posterior['mean'], self.posterior['std'])
 
-        if self.args.algo == 'Dreamerv2':
+        if self.args["algo"] == 'Dreamerv2':
             post_no_grad = self.rssm.detach_state(self.posterior)
             prior_no_grad = self.rssm.detach_state(prior)
             post_mean_no_grad, post_std_no_grad = post_no_grad['mean'], post_no_grad['std']
             prior_mean_no_grad, prior_std_no_grad = prior_no_grad['mean'], prior_no_grad['std']
             
-            kl_loss = self.args.kl_alpha *(torch.mean(distributions.kl.kl_divergence(
+            kl_loss = self.args["kl_alpha"] *(torch.mean(distributions.kl.kl_divergence(
                                self.rssm.get_dist(post_mean_no_grad, post_std_no_grad), prior_dist)))
-            kl_loss += (1-self.args.kl_alpha) * (torch.mean(distributions.kl.kl_divergence(
+            kl_loss += (1-self.args["kl_alpha"]) * (torch.mean(distributions.kl.kl_divergence(
                                post_dist, self.rssm.get_dist(prior_mean_no_grad, prior_std_no_grad))))
         else:
             kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
-            kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), self.args.free_nats))
+            kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), self.args["free_nats"]))
 
         obs_loss = -torch.mean(obs_dist.log_prob(obs[1:])) 
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
-        if self.args.use_disc_model:
+        if self.args["use_disc_model"]:
           disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
 
-        if self.args.use_disc_model:
-          model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss + self.args.disc_loss_coeff * disc_loss
+        if self.args["use_disc_model"]:
+          model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss + self.args["disc_loss_coeff"] * disc_loss
         else:
-          model_loss = self.args.kl_loss_coeff * kl_loss + obs_loss + rew_loss 
+          model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss 
         
         return model_loss
 
@@ -180,7 +172,7 @@ class Dreamer:
             posterior = self.rssm.detach_state(self.rssm.seq_to_batch(self.posterior))
 
         with FreezeParameters(self.world_model_modules):
-            imag_states = self.rssm.imagine_rollout(self.actor, posterior, self.args.imagine_horizon)
+            imag_states = self.rssm.imagine_rollout(self.actor, posterior, self.args["imagine_horizon"])
 
         self.imag_feat = torch.cat([imag_states['stoch'], imag_states['deter']], dim=-1)
 
@@ -190,14 +182,14 @@ class Dreamer:
 
             imag_rews = imag_rew_dist.mean
             imag_vals = imag_val_dist.mean
-            if self.args.use_disc_model:
+            if self.args["use_disc_model"]:
                 imag_disc_dist = self.discount_model(self.imag_feat)
                 discounts = imag_disc_dist.mean().detach()
             else:
-                discounts =  self.args.discount * torch.ones_like(imag_rews).detach()
+                discounts =  self.args["discount"] * torch.ones_like(imag_rews).detach()
 
         self.returns = compute_return(imag_rews[:-1], imag_vals[:-1],discounts[:-1] \
-                                         ,self.args.td_lambda, imag_vals[-1])
+                                         ,self.args["td_lambda"], imag_vals[-1])
 
         discounts = torch.cat([torch.ones_like(discounts[:1]), discounts[1:-1]], 0)
         self.discounts = torch.cumprod(discounts, 0).detach()
@@ -227,19 +219,19 @@ class Dreamer:
         model_loss = self.world_model_loss(obs, acs, rews, nonterms)
         self.world_model_opt.zero_grad()
         model_loss.backward()
-        nn.utils.clip_grad_norm_(self.world_model_params, self.args.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.world_model_params, self.args["grad_clip_norm"])
         self.world_model_opt.step()
 
         actor_loss = self.actor_loss()
         self.actor_opt.zero_grad()
         actor_loss.backward()
-        nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.actor.parameters(), self.args["grad_clip_norm"])
         self.actor_opt.step()
 
         value_loss = self.value_loss()
         self.value_opt.zero_grad()
         value_loss.backward()
-        nn.utils.clip_grad_norm_(self.value_model.parameters(), self.args.grad_clip_norm)
+        nn.utils.clip_grad_norm_(self.value_model.parameters(), self.args["grad_clip_norm"])
         self.value_opt.step()
 
         return model_loss.item(), actor_loss.item(), value_loss.item()
@@ -253,7 +245,7 @@ class Dreamer:
         features = torch.cat([posterior['stoch'], posterior['deter']], dim=-1)
         action = self.actor(features, deter=not explore) 
         if explore:
-            action = self.actor.add_exploration(action, self.args.action_noise)
+            action = self.actor.add_exploration(action, self.args["action_noise"])
 
         return  posterior, action
 
@@ -315,7 +307,7 @@ class Dreamer:
                 if render:
                     video_images[i].append(obs['image'].transpose(1,2,0).copy())
                 obs = next_obs
-        return episode_rew, np.array(video_images[:self.args.max_videos_to_save])
+        return episode_rew, np.array(video_images[:self.args["max_videos_to_save"]])
 
     def collect_random_episodes(self, env, seed_steps):
 
@@ -347,7 +339,7 @@ class Dreamer:
             'reward_model': self.reward_model.state_dict(),
             'obs_encoder': self.obs_encoder.state_dict(),
             'obs_decoder': self.obs_decoder.state_dict(),
-            'discount_model': self.discount_model.state_dict() if self.args.use_disc_model else None,
+            'discount_model': self.discount_model.state_dict() if self.args["use_disc_model"] else None,
             'actor_optimizer': self.actor_opt.state_dict(),
             'value_optimizer': self.value_opt.state_dict(),
             'world_model_optimizer': self.world_model_opt.state_dict(),}, save_path)
@@ -360,7 +352,7 @@ class Dreamer:
         self.reward_model.load_state_dict(checkpoint['reward_model'])
         self.obs_encoder.load_state_dict(checkpoint['obs_encoder'])
         self.obs_decoder.load_state_dict(checkpoint['obs_decoder'])
-        if self.args.use_disc_model and (checkpoint['discount_model'] is not None):
+        if self.args["use_disc_model"] and (checkpoint['discount_model'] is not None):
             self.discount_model.load_state_dict(checkpoint['discount_model'])
 
         self.world_model_opt.load_state_dict(checkpoint['world_model_optimizer'])
@@ -467,7 +459,7 @@ def main():
             logger.log_scalars(logs, global_step)
             if config.get("log-video-freq", -1) != -1 and global_step % config["log-video-freq"] == 0:
                 if len(video_images[0]) != 0:
-                    logger.log_video(video_images, global_step, config["max-videos-to-save"])
+                    logger.log_video(video_images, global_step, config["max_videos_to_save"])
             if global_step % config["checkpoint-interval"] == 0:
                 ckpt_dir = os.path.join(logdir, 'ckpts')
                 if not os.path.exists(ckpt_dir):
@@ -486,7 +478,7 @@ def main():
             'test_std_reward': np.std(episode_rews),
         })
         logger.dump_scalars_to_pickle(logs, 0, log_title='test_scalars.pkl')
-        logger.log_videos(video_images, 0, max_videos_to_save=config["max-videos-to-save"])
+        logger.log_videos(video_images, 0, max_videos_to_save=config["max_videos_to_save"])
 
 if __name__ == '__main__':
     main()

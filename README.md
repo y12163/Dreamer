@@ -25,10 +25,15 @@ Code structure is similar to original work by Danijar Hafner in Tensorflow
 
 Runs can be configured from the config.json
 
+## Installation
+
+Run:
+`conda env create -f environment.yml`
+
 #### For training
-`python dreamer.py --env 'walker-walk' --algo 'Dreamerv1' --exp 'default_hp' --train`
+`python dreamer.py --config config.json --train`
 #### For Evaluation
-`python dreamer.py --env 'walker-walk' --algo 'Dreamerv1' --exp 'eval' --evaluate --restore --checkpoint_path '<your_ckpt_path>'`
+`python dreamer.py --config config.json --evaluate --restore --checkpoint_path '<your_ckpt_path>'`
 
 
 

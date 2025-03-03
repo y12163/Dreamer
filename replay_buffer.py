@@ -16,15 +16,19 @@ class ReplayBuffer:
         self.batch_size = batch_size          # Number of sequences per batch
         self.buffer = collections.deque(maxlen=size)  # Buffer to store episodes
         self.ongoing_episode = []             # Temporary storage for current episode
+        self.steps, self.episodes = 0, 0
 
     def add(self, obs, ac, rew, done):
         """
         Adds a single transition to the current episode.
         Expects obs to be a dict with an 'image' key.
         """
-        self.ongoing_episode.append((obs, ac, rew, done))
+        self.ongoing_episode.append((obs["image"], ac, rew, done))
+        self.steps += 1 
+        
         if done:
             self._finalize_episode()
+            self.episodes = self.episodes + 1
 
     def _finalize_episode(self):
         """
@@ -38,7 +42,7 @@ class ReplayBuffer:
             'obs': np.array([step[0] for step in self.ongoing_episode], dtype=np.uint8),
             'actions': np.array([step[1] for step in self.ongoing_episode], dtype=np.float32),
             'rewards': np.array([step[2] for step in self.ongoing_episode], dtype=np.float32),
-            'terminals': np.array([step[3] for step in self.ongoing_episode], dtype=np.bool_),
+            'terminals': np.array([step[3] for step in self.ongoing_episode], dtype=np.float32),
         }
         self.buffer.append(episode)
         self.ongoing_episode = []  # Reset after storing
@@ -70,7 +74,7 @@ class ReplayBuffer:
         batch_obs = torch.tensor(np.array(batch_obs), dtype=torch.float32)
         batch_actions = torch.tensor(np.array(batch_actions), dtype=torch.float32)
         batch_rewards = torch.tensor(np.array(batch_rewards), dtype=torch.float32)
-        batch_terminals = torch.tensor(np.array(batch_terminals), dtype=torch.bool)
+        batch_terminals = torch.tensor(np.array(batch_terminals), dtype=torch.float32)
         
         # Transpose to shape [seq_len, batch_size, ...]
         batch_obs = batch_obs.permute(1, 0, *range(2, len(batch_obs.shape)))
