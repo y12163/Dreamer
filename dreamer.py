@@ -211,10 +211,10 @@ class Dreamer:
     def train_one_batch(self):
 
         obs, acs, rews, terms = self.data_buffer.sample()
-        obs  = torch.tensor(obs, dtype=torch.float32).to(self.device)
-        acs  = torch.tensor(acs, dtype=torch.float32).to(self.device)
-        rews = torch.tensor(rews, dtype=torch.float32).to(self.device).unsqueeze(-1)
-        nonterms = torch.tensor((1.0-terms), dtype=torch.float32).to(self.device).unsqueeze(-1)
+        obs  = obs.to(self.device)
+        acs  = acs.to(self.device)
+        rews = rews.to(self.device).unsqueeze(-1)
+        nonterms = (1.0-terms).to(self.device).unsqueeze(-1)
 
         model_loss = self.world_model_loss(obs, acs, rews, nonterms)
         self.world_model_opt.zero_grad()
@@ -400,6 +400,8 @@ def main():
         torch.cuda.manual_seed(config["seed"])
     else:
         device = torch.device('cpu')
+
+    print("Using device: {}".format(device))
 
     # Create environments.
     train_env = make_env(config)

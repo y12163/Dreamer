@@ -20,6 +20,7 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
+  - pytorch-cuda
   - pip
   - pip:
       - dm_control
