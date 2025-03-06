@@ -345,6 +345,9 @@ class Dreamer:
             'world_model_optimizer': self.world_model_opt.state_dict(),}, save_path)
 
     def restore_checkpoint(self, ckpt_path):
+        print(f"Attempting to load checkpoint from: {ckpt_path}")  # Debugging step
+        if not ckpt_path or not os.path.exists(ckpt_path):
+            raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
 
         checkpoint = torch.load(ckpt_path)
         self.rssm.load_state_dict(checkpoint['rssm'])
@@ -368,6 +371,7 @@ def main():
     parser.add_argument('--restore', action='store_true', help='Restore model from checkpoint')
     parser.add_argument('--no-gpu', action='store_true', help="Disable GPU")
     parser.add_argument('--render', action='store_true', help="Render environment")
+    parser.add_argument('--checkpoint_path', type=str, help='Path to model checkpoint')
     args = parser.parse_args()
 
     # Load configuration from file.
@@ -379,6 +383,7 @@ def main():
     config["restore"] = args.restore
     config["no_gpu"] = args.no_gpu
     config["render"] = args.render
+    config["checkpoint_path"] = args.checkpoint_path
 
     # Set up log directory.
     data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
