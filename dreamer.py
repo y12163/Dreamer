@@ -367,6 +367,7 @@ def main():
     parser.add_argument('--config', type=str, required=True, help='Path to configuration JSON file')
     # Allow overriding some flags
     parser.add_argument('--train', action='store_true', help='Train the model')
+    parser.add_argument('--env', type=str, help='Environment name')
     parser.add_argument('--evaluate', action='store_true', help='Evaluate the model')
     parser.add_argument('--restore', action='store_true', help='Restore model from checkpoint')
     parser.add_argument('--no-gpu', action='store_true', help="Disable GPU")
@@ -379,21 +380,31 @@ def main():
 
     # Override config with command-line flags if needed.
     config["train"] = args.train
+    config["env"] = args.env
     config["evaluate"] = args.evaluate
-    config["restore"] = args.restore
+    config["restore"] = True if args.evaluate else False
     config["no_gpu"] = args.no_gpu
     config["render"] = args.render
     config["checkpoint_path"] = args.checkpoint_path
 
     # Set up log directory.
-    data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
-    if not os.path.exists(data_path):
-        os.makedirs(data_path)
-    logdir = "{}_{}_{}_{}".format(config["env"], config["algo"], config["exp-name"],
-                                   time.strftime("%d-%m-%Y-%H-%M-%S"))
-    logdir = os.path.join(data_path, logdir)
-    if not os.path.exists(logdir):
-        os.makedirs(logdir)
+    if config["evaluate"]:
+        # Use the directory of the provided checkpoint and create an "evals" subdirectory.
+        if not config.get("checkpoint_path"):
+            raise ValueError("Checkpoint path must be provided for evaluation.")
+        checkpoint_dir = os.path.dirname(os.path.realpath(config["checkpoint_path"]))
+        logdir = os.path.join(os.path.dirname(checkpoint_dir), "evals")
+        if not os.path.exists(logdir):
+            os.makedirs(logdir)
+    else:
+        data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+        if not os.path.exists(data_path):
+            os.makedirs(data_path)
+        logdir = "{}_{}_{}_{}".format(config["env"], config["algo"], config["exp-name"],
+                                       time.strftime("%d-%m-%Y-%H-%M-%S"))
+        logdir = os.path.join(data_path, logdir)
+        if not os.path.exists(logdir):
+            os.makedirs(logdir)
 
     # Set seeds for reproducibility.
     random.seed(config["seed"])
@@ -486,6 +497,7 @@ def main():
         })
         logger.dump_scalars_to_pickle(logs, 0, log_title='test_scalars.pkl')
         logger.log_videos(video_images, 0, max_videos_to_save=config["max_videos_to_save"])
+
 
 if __name__ == '__main__':
     main()
