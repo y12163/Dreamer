@@ -83,7 +83,7 @@ class Logger:
             clip = mpy.ImageSequenceClip(list(videos[i]), fps=fps)
             new_video_title = video_title+'{}_{}'.format(step, i) + '.gif'
             filename = os.path.join(self._log_dir, new_video_title)
-            video.write_gif(filename, fps =fps)
+            clip.write_gif(filename, fps =fps)
 
 
     def dump_scalars_to_pickle(self, metrics, step, log_title=None):
