@@ -31,14 +31,14 @@ Run:
 `conda env create -f environment.yml`
 
 #### For training
-`python dreamer.py --config config.json --train`
+`python dreamer.py --config config.json --env <env-name> --train`
 #### For Evaluation
-`python dreamer.py --config config.json --evaluate --restore --checkpoint_path '<your_ckpt_path>'`
+`python dreamer.py --config config.json --evaluate --env <env-name> --checkpoint_path '<your_ckpt_path>'`
 
 
 
 ## Acknowledgements
-This code is heavily inpsired by following open-source works
+This code is heavily inspired by following open-source works
 
 dreamer by Danijar Hafner : https://github.com/danijar/dreamer
 
