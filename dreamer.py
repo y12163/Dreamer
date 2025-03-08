@@ -382,7 +382,7 @@ def main():
     config["train"] = args.train
     config["env"] = args.env
     config["evaluate"] = args.evaluate
-    config["restore"] = True if args.evaluate else False
+    config["restore"] = True if args.evaluate else args.restore
     config["no_gpu"] = args.no_gpu
     config["render"] = args.render
     config["checkpoint_path"] = args.checkpoint_path
