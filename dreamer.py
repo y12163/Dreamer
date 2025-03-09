@@ -21,11 +21,17 @@ import json
 os.environ['MUJOCO_GL'] = 'egl'
 
 def load_config(config_path):
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
     with open(config_path, 'r') as f:
         config = json.load(f)
     return config
 
 def make_env(config):
+    if config.get("env") is None:
+        raise ValueError("Environment name (config['env']) is None. Please set a valid environment.")
+
     # Adapted to work with the config dictionary
     env = env_wrapper.DeepMindControl(config["env"], config["seed"])
     env = env_wrapper.ActionRepeat(env, config["action-repeat"])
@@ -34,11 +40,10 @@ def make_env(config):
     return env
 
 def preprocess_obs(obs):
-    obs = obs.to(torch.float32)/255.0 - 0.5
+    obs = obs.to(torch.float32) / 255.0 - 0.5
     return obs
 
 class Dreamer:
-
     def __init__(self, args, obs_shape, action_size, device, restore=False):
 
         self.args = args
@@ -69,15 +74,18 @@ class Dreamer:
                      units = self.args["num_units"],
                      n_layers=4,
                      activation=self.args["dense_activation_function"]).to(self.device)
+        
         self.obs_encoder  = ConvEncoder(
                             input_shape= self.obs_shape,
                             embed_size = self.args["obs_embed_size"],
                             activation =self.args["cnn_activation_function"]).to(self.device)
+
         self.obs_decoder  = ConvDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
                             output_shape=self.obs_shape,
                             activation = self.args["cnn_activation_function"]).to(self.device)
+
         self.reward_model = DenseDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
@@ -86,6 +94,7 @@ class Dreamer:
                             units=self.args["num_units"],
                             activation= self.args["dense_activation_function"],
                             dist = 'normal').to(self.device)
+
         self.value_model  = DenseDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
@@ -93,32 +102,33 @@ class Dreamer:
                             n_layers = 3,
                             units = self.args["num_units"],
                             activation= self.args["dense_activation_function"],
-                            dist = 'normal').to(self.device) 
-        if self.args["use_disc_model"]:  
-          self.discount_model = DenseDecoder(
+                            dist = 'normal').to(self.device)
+
+        if self.args["use_disc_model"]:
+            self.discount_model = DenseDecoder(
                                 stoch_size = self.args["stoch_size"],
                                 deter_size = self.args["deter_size"],
-                                output_shape = (1,),
+                                output_shape = (1, ),
                                 n_layers = 2,
                                 units=self.args["num_units"],
                                 activation= self.args["dense_activation_function"],
                                 dist = 'binary').to(self.device)
         
         if self.args["use_disc_model"]:
-          self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
-              + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters()) + list(self.discount_model.parameters())
+            self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
+                                    + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters()) + list(self.discount_model.parameters())
         else:
-          self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
-              + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters())
+            self.world_model_params = list(self.rssm.parameters()) + list(self.obs_encoder.parameters()) \
+                                    + list(self.obs_decoder.parameters()) + list(self.reward_model.parameters())
     
         self.world_model_opt = optim.Adam(self.world_model_params, self.args["model_learning_rate"])
         self.value_opt = optim.Adam(self.value_model.parameters(), self.args["value_learning_rate"])
         self.actor_opt = optim.Adam(self.actor.parameters(), self.args["actor_learning_rate"])
 
         if self.args["use_disc_model"]:
-          self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model, self.discount_model]
+            self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model, self.discount_model]
         else:
-          self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model]
+            self.world_model_modules = [self.rssm, self.obs_encoder, self.obs_decoder, self.reward_model]
         self.value_modules = [self.value_model]
         self.actor_modules = [self.actor]
 
@@ -135,7 +145,7 @@ class Dreamer:
         rew_dist = self.reward_model(features)
         obs_dist = self.obs_decoder(features)
         if self.args["use_disc_model"]:
-          disc_dist = self.discount_model(features)
+            disc_dist = self.discount_model(features)
 
         prior_dist = self.rssm.get_dist(prior['mean'], prior['std'])
         post_dist = self.rssm.get_dist(self.posterior['mean'], self.posterior['std'])
@@ -156,13 +166,14 @@ class Dreamer:
 
         obs_loss = -torch.mean(obs_dist.log_prob(obs[1:])) 
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
+        
         if self.args["use_disc_model"]:
-          disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
+            disc_loss = -torch.mean(disc_dist.log_prob(nonterms[:-1]))
 
         if self.args["use_disc_model"]:
-          model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss + self.args["disc_loss_coeff"] * disc_loss
+            model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss + self.args["disc_loss_coeff"] * disc_loss
         else:
-          model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss 
+            model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss 
         
         return model_loss
 
@@ -420,6 +431,7 @@ def main():
     print("Using device: {}".format(device))
 
     # Create environments.
+
     train_env = make_env(config)
     test_env = make_env(config)
     obs_shape = train_env.observation_space['image'].shape
