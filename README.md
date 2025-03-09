@@ -9,6 +9,12 @@ This work is my attempt at reproducing Dreamerv1 & v2 papers in pytorch specific
  1. Replay Buffer manages episodes instead of transitions, making sure that we don't mix episodes when sampling
  2. Although less flexible, Convolution models where layed out step by step for readibility
 
+#### Simple implementation of the Dreamer agent
+
+<img src="https://github.com/user-attachments/assets/cb809c2f-135c-4c96-9dde-50c3e16e4fb6" width="150">
+<img src="https://github.com/user-attachments/assets/da6e924c-45b4-4cb8-a3bc-619c4cc54663" width="150">
+<img src="https://github.com/user-attachments/assets/3e69087a-0e17-478f-b187-cf16dd227ad8" width="150">
+<img src="https://github.com/user-attachments/assets/0f440da0-066f-40f6-9787-c7b72988e379" width="150">
 
 ## Code Structure
 Code structure is similar to original work by Danijar Hafner in Tensorflow
