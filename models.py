@@ -20,7 +20,7 @@ _str_to_activation = {
 
 class RSSM(nn.Module):
 
-    def __init__(self, action_size, stoch_size, deter_size,  hidden_size, obs_embed_size, activation):
+    def __init__(self, action_size, stoch_size, deter_size,  hidden_size, obs_embed_size, proprio_size, activation):
 
         super().__init__()
 
@@ -29,14 +29,18 @@ class RSSM(nn.Module):
         self.deter_size  = deter_size   # GRU hidden units
         self.hidden_size = hidden_size  # intermediate fc_layers hidden units 
         self.embedding_size = obs_embed_size
+        self.proprio_size = proprio_size  # Add proprioception size
 
         self.act_fn = _str_to_activation[activation]
         self.rnn = nn.GRUCell(self.deter_size, self.deter_size)
-
         self.fc_state_action = nn.Linear(self.stoch_size + self.action_size, self.deter_size)
         self.fc_embed_prior = nn.Linear(self.deter_size, self.hidden_size)
         self.fc_state_prior  = nn.Linear(self.hidden_size, 2*self.stoch_size)
-        self.fc_embed_posterior = nn.Linear(self.embedding_size + self.deter_size, self.hidden_size)
+        self.fc_proprio_embed = nn.Linear(self.proprio_size, self.hidden_size)
+        # Modify posterior embedding to include proprioception
+        self.fc_embed_posterior = nn.Linear(self.embedding_size + self.proprio_size + self.deter_size, self.hidden_size)
+        self.fc_embed_image_posterior = nn.Linear(self.embedding_size+ self.deter_size, self.hidden_size)
+        #self.fc_embed_posterior = nn.Linear(self.embedding_size + self.deter_size, self.hidden_size)
         self.fc_state_posterior = nn.Linear(self.hidden_size, 2*self.stoch_size)
 
 
@@ -54,10 +58,29 @@ class RSSM(nn.Module):
         distribution = distributions.independent.Independent(distribution, 1)
         return distribution
 
-    def observe_step(self, prev_state, prev_action, obs_embed, nonterm=1.0):
+    #Similar observe_step() function, but only consider image observation.
+    def observe_image_step(self, prev_state, prev_action, obs_embed,nonterm=1.0):
 
         prior = self.imagine_step(prev_state, prev_action, nonterm)
-        posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1)))
+
+        # Include proprioception in posterior computation
+        posterior_embed = self.act_fn(self.fc_embed_image_posterior(torch.cat([obs_embed, prior['deter']], dim=-1)))
+        posterior = self.fc_state_posterior(posterior_embed)
+        mean, std = torch.chunk(posterior, 2, dim=-1)
+        std = F.softplus(std) + 0.1
+        sample = mean + torch.randn_like(mean) * std
+
+        posterior = {'mean': mean, 'std': std, 'stoch': sample, 'deter': prior['deter']}
+        return prior, posterior
+    
+    def observe_step(self, prev_state, prev_action, obs_embed, proprio,nonterm=1.0):
+
+        prior = self.imagine_step(prev_state, prev_action, nonterm)
+        # Include proprioception in posterior computation
+        posterior_embed = self.act_fn(
+            self.fc_embed_posterior(torch.cat([obs_embed, proprio, prior['deter']], dim=-1))
+        )
+        #posterior_embed = self.act_fn(self.fc_embed_posterior(torch.cat([obs_embed, prior['deter']], dim=-1)))
         posterior = self.fc_state_posterior(posterior_embed)
         mean, std = torch.chunk(posterior, 2, dim=-1)
         std = F.softplus(std) + 0.1
@@ -78,14 +101,35 @@ class RSSM(nn.Module):
         prior = {'mean': mean, 'std': std, 'stoch': sample, 'deter': deter}
         return prior
 
-    def observe_rollout(self, obs_embed, actions, nonterms, prev_state, horizon):
+    #similar observe rollout but only consider image observation
+    def observe_image_rollout(self, obs_embed, actions, nonterms, prev_state, horizon):
 
         priors = []
         posteriors = []
 
         for t in range(horizon):
             prev_action = actions[t]* nonterms[t]
-            prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+            #prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+            prior_state, posterior_state = self.observe_image_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+            
+            priors.append(prior_state)
+            posteriors.append(posterior_state)
+            prev_state = posterior_state
+
+        priors = self.stack_states(priors, dim=0)
+        posteriors = self.stack_states(posteriors, dim=0)
+
+        return priors, posteriors
+
+    def observe_rollout(self, obs_embed, proprio, actions, nonterms, prev_state, horizon):
+
+        priors = []
+        posteriors = []
+
+        for t in range(horizon):
+            prev_action = actions[t]* nonterms[t]
+            #prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], nonterms[t])
+            prior_state, posterior_state = self.observe_step(prev_state, prev_action, obs_embed[t], proprio[t], nonterms[t])   
             priors.append(prior_state)
             posteriors.append(posterior_state)
             prev_state = posterior_state
@@ -132,6 +176,29 @@ class RSSM(nn.Module):
             stoch = torch.reshape(state['stoch'], (state['stoch'].shape[0]* state['stoch'].shape[1], *state['stoch'].shape[2:])),
             deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
 
+class ProprioEncoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim)
+        )
+
+    def forward(self, proprio):
+        return self.mlp(proprio)
+
+class ProprioDecoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, output_dim)  # Output should match original proprioception size
+        )
+
+    def forward(self, latent_features):
+        return self.mlp(latent_features)
 
 class ConvEncoder(nn.Module):
     def __init__(self, input_shape, embed_size, activation, depth=32):

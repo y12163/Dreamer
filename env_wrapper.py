@@ -27,8 +27,22 @@ class DeepMindControl:
     def observation_space(self):
         spaces = {}
         for key, value in self._env.observation_spec().items():
-          spaces[key] = gym.spaces.Box(
-              -np.inf, np.inf, value.shape, dtype=np.float32)
+            spaces[key] = gym.spaces.Box(
+                -np.inf, np.inf, value.shape, dtype=np.float32)
+            
+        #proprioception 
+        proprio = []
+        for key, space in spaces.items():
+            if len(space.shape) > 0:  # Ensure it's not a scalar
+                proprio.append(np.prod(space.shape))  # Get total number of elements
+
+        if proprio:
+            proprio_shape = (sum(proprio),)  # Final proprio shape
+        else:
+            proprio_shape = (0,)
+
+        spaces['proprio'] = gym.spaces.Box(
+                -np.inf, np.inf, proprio_shape, dtype=np.float32)
         spaces['image'] = gym.spaces.Box(
             0, 255, (3,) + self._size , dtype=np.uint8)
         return gym.spaces.Dict(spaces)
@@ -41,6 +55,16 @@ class DeepMindControl:
     def step(self, action):
         time_step = self._env.step(action)
         obs = dict(time_step.observation)
+        #Extract proprioception
+        proprio_obs = []
+        for key in obs:
+            proprio_obs.append(obs[key].flatten())  # Flatten in case it's multi-dimensional
+        
+        if proprio_obs:
+            proprio_obs = np.concatenate(proprio_obs, axis=0)
+        
+        obs['proprio'] = proprio_obs
+
         obs['image'] = self.render().transpose(2, 0, 1).copy()
         reward = time_step.reward or 0
         done = time_step.last()
@@ -50,6 +74,16 @@ class DeepMindControl:
     def reset(self):
         time_step = self._env.reset()
         obs = dict(time_step.observation)
+        # Extract proprioception data
+        proprio_obs = []
+        for key in obs:
+            proprio_obs.append(obs[key].flatten())  # Flatten in case it's multi-dimensional
+        
+        if proprio_obs:
+            proprio_obs = np.concatenate(proprio_obs, axis=0)
+        
+        obs['proprio'] = proprio_obs
+
         obs['image'] = self.render().transpose(2, 0, 1).copy()
         return obs
 

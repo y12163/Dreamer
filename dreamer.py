@@ -14,7 +14,7 @@ from collections import OrderedDict
 
 import env_wrapper
 from replay_buffer import ReplayBuffer
-from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
+from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder, ProprioEncoder,ProprioDecoder
 from utils import *
 import json
 
@@ -43,16 +43,22 @@ def preprocess_obs(obs):
     obs = obs.to(torch.float32) / 255.0 - 0.5
     return obs
 
+#TODO: currently not being used. Needs to be modified.
+def preprocess_proprio(obs):
+    obs = obs.to(torch.float32) / 255.0 - 0.5
+    return obs
+
 class Dreamer:
-    def __init__(self, args, obs_shape, action_size, device, restore=False):
+    def __init__(self, args, obs_shape, proprio_size, action_size, device, restore=False):
 
         self.args = args
         self.obs_shape = obs_shape
+        self.proprio_size = proprio_size
         self.action_size = action_size
         self.device = device
         self.restore = args["restore"]
         self.restore_path = args["checkpoint_path"]
-        self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.action_size,
+        self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.proprio_size,self.action_size,
                                                     self.args["train_seq_len"], self.args["batch_size"])
 
         self._build_model(restore=self.restore)
@@ -65,6 +71,7 @@ class Dreamer:
                     deter_size = self.args["deter_size"],
                     hidden_size = self.args["deter_size"],
                     obs_embed_size = self.args["obs_embed_size"],
+                    proprio_size = 32,              #embedded size of proprioception, can be further tuned.
                     activation =self.args["dense_activation_function"]).to(self.device)
 
         self.actor = ActionDecoder(
@@ -85,6 +92,11 @@ class Dreamer:
                             deter_size = self.args["deter_size"],
                             output_shape=self.obs_shape,
                             activation = self.args["cnn_activation_function"]).to(self.device)
+        
+        #Proprio_encoder and decoder, decoder is not used currently, since reconstructing proprioception is not considered for now.
+        self.proprio_encoder = ProprioEncoder(input_dim=self.proprio_size, hidden_dim=64, output_dim=32).to(self.device)
+
+        self.proprio_decoder = ProprioDecoder(input_dim=32, hidden_dim=64, output_dim=self.proprio_size).to(self.device) #TODO: not being used currently.
 
         self.reward_model = DenseDecoder(
                             stoch_size = self.args["stoch_size"],
@@ -135,15 +147,24 @@ class Dreamer:
         if restore:
             self.restore_checkpoint(self.restore_path)
 
-    def world_model_loss(self, obs, acs, rews, nonterms):
+    def world_model_loss(self, obs_image,obs_proprio, acs, rews, nonterms):
 
-        obs = preprocess_obs(obs)
+        #obs = preprocess_obs(obs)
+        obs = preprocess_obs(obs_image)
         obs_embed = self.obs_encoder(obs[1:])
         init_state = self.rssm.init_state(self.args["batch_size"], self.device)
-        prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
+        
+        #features of concatenated images and proprioception
+        proprio = self.proprio_encoder(obs_proprio[1:])
+        prior, self.posterior = self.rssm.observe_rollout(obs_embed,proprio, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features = torch.cat([self.posterior['stoch'], self.posterior['deter']], dim=-1)
         rew_dist = self.reward_model(features)
-        obs_dist = self.obs_decoder(features)
+        
+        #getting features of images only
+        prior_image,posterior_image = self.rssm.observe_image_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
+        features_image = torch.cat([posterior_image['stoch'], posterior_image['deter']], dim=-1)
+        obs_dist = self.obs_decoder(features_image)
+
         if self.args["use_disc_model"]:
             disc_dist = self.discount_model(features)
 
@@ -221,13 +242,15 @@ class Dreamer:
 
     def train_one_batch(self):
 
-        obs, acs, rews, terms = self.data_buffer.sample()
-        obs  = obs.to(self.device)
+        #adding proprioception to buffer
+        obs_iamge,obs_proprio, acs, rews, terms = self.data_buffer.sample()
+        obs_image  = obs_iamge.to(self.device)
+        obs_proprio  = obs_proprio.to(self.device)
         acs  = acs.to(self.device)
         rews = rews.to(self.device).unsqueeze(-1)
         nonterms = (1.0-terms).to(self.device).unsqueeze(-1)
 
-        model_loss = self.world_model_loss(obs, acs, rews, nonterms)
+        model_loss = self.world_model_loss(obs_image,obs_proprio, acs, rews, nonterms)   #corresponds to modified model loss
         self.world_model_opt.zero_grad()
         model_loss.backward()
         nn.utils.clip_grad_norm_(self.world_model_params, self.args["grad_clip_norm"])
@@ -247,12 +270,22 @@ class Dreamer:
 
         return model_loss.item(), actor_loss.item(), value_loss.item()
 
-    def act_with_world_model(self, obs, prev_state, prev_action, explore=False):
+    def act_with_world_model(self, obs_image,obs_proprio, prev_state, prev_action, explore=False):
 
-        obs = obs['image']
+        #adding proprioception
+        img_obs = obs_image
+        proprio_obs = obs_proprio
+
+        obs = img_obs
         obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
         obs_embed = self.obs_encoder(preprocess_obs(obs))
-        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
+
+        #encode proprioception
+        proprio_obs  = torch.tensor(proprio_obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        proprio = self.proprio_encoder(proprio_obs)
+        
+        #adding encoded proprioception to rssm
+        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed,proprio)
         features = torch.cat([posterior['stoch'], posterior['deter']], dim=-1)
         action = self.actor(features, deter=not explore) 
         if explore:
@@ -272,7 +305,7 @@ class Dreamer:
         for i in range(collect_steps):
 
             with torch.no_grad():
-                posterior, action = self.act_with_world_model(obs, prev_state, prev_action, explore=True)
+                posterior, action = self.act_with_world_model(obs['image'],obs['proprio'], prev_state, prev_action, explore=True)   #corresponds to modified world model.
             action = action[0].cpu().numpy()
             next_obs, rew, done, _ = env.step(action)
             self.data_buffer.add(obs, action, rew, done)
@@ -307,7 +340,7 @@ class Dreamer:
 
             while not done:
                 with torch.no_grad():
-                    posterior, action = self.act_with_world_model(obs, prev_state, prev_action)
+                    posterior, action = self.act_with_world_model(obs['image'],obs['proprio'], prev_state, prev_action)
                 action = action[0].cpu().numpy()
                 next_obs, rew, done, _ = env.step(action)
                 prev_state = posterior
@@ -329,8 +362,7 @@ class Dreamer:
         for i in range(seed_steps):
             action = env.action_space.sample()
             next_obs, rew, done, _ = env.step(action)
-            
-            self.data_buffer.add(obs, action, rew, done)
+            self.data_buffer.add(obs, action, rew, done)    
             seed_episode_rews[-1] += rew
             if done:
                 obs = env.reset()
@@ -350,6 +382,8 @@ class Dreamer:
             'reward_model': self.reward_model.state_dict(),
             'obs_encoder': self.obs_encoder.state_dict(),
             'obs_decoder': self.obs_decoder.state_dict(),
+            'proprio_encoder': self.proprio_encoder.state_dict(),
+            'proprio_decoder': self.proprio_decoder.state_dict(),
             'discount_model': self.discount_model.state_dict() if self.args["use_disc_model"] else None,
             'actor_optimizer': self.actor_opt.state_dict(),
             'value_optimizer': self.value_opt.state_dict(),
@@ -366,6 +400,8 @@ class Dreamer:
         self.reward_model.load_state_dict(checkpoint['reward_model'])
         self.obs_encoder.load_state_dict(checkpoint['obs_encoder'])
         self.obs_decoder.load_state_dict(checkpoint['obs_decoder'])
+        self.proprio_encoder.load_state_dict(checkpoint['proprio_encoder'])
+        self.proprio_decoder.load_state_dict(checkpoint['proprio_decoder'])
         if self.args["use_disc_model"] and (checkpoint['discount_model'] is not None):
             self.discount_model.load_state_dict(checkpoint['discount_model'])
 
@@ -435,10 +471,14 @@ def main():
     train_env = make_env(config)
     test_env = make_env(config)
     obs_shape = train_env.observation_space['image'].shape
+
+    #image_shape = train_env.observation_space['image'].shape 
+    proprio_shape = train_env.observation_space['proprio'].shape[0] #some tasks need to  plus 1 for shape, see next line
+    #proprio_shape = train_env.observation_space['proprio'].shape[0] +1    #some tasks need to  plus 1 for shape (walker-walk)
     action_size = train_env.action_space.shape[0]
 
     # Instantiate Dreamer agent.
-    dreamer = Dreamer(config, obs_shape, action_size, device, config.get("restore", False))
+    dreamer = Dreamer(config, obs_shape, proprio_shape, action_size, device, config.get("restore", False))   #corresponds to modified Dreamer with proprioception
 
     # Create logger.
     logger = Logger(logdir)
